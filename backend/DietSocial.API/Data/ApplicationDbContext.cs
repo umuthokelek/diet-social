@@ -17,6 +17,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Like> Likes { get; set; }
     public DbSet<Follow> Follows { get; set; }
     public DbSet<Notification> Notifications { get; set; }
+    public DbSet<Recipe> Recipes { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -99,5 +100,11 @@ public class ApplicationDbContext : DbContext
             .WithMany()
             .HasForeignKey(n => n.PostId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        builder.Entity<Recipe>()
+            .HasOne(r => r.User)
+            .WithMany()
+            .HasForeignKey(r => r.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 } 

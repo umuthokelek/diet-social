@@ -6,6 +6,8 @@ using System.Text;
 using DietSocial.API.Data;
 using DietSocial.API.Services;
 using DietSocial.API.Configuration;
+using AutoMapper;
+using DietSocial.API.Mapping;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +17,9 @@ builder.Services.AddControllers();
 // Configure PostgreSQL
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Add AutoMapper
+builder.Services.AddAutoMapper(typeof(RecipeMappingProfile));
 
 // Add JWT configuration
 var jwtConfig = builder.Configuration.GetSection("JwtConfig").Get<JwtConfig>();
