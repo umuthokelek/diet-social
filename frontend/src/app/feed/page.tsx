@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from 'next/link';
 import Head from 'next/head';
-import { getAllPosts, getFollowingPosts, createPost, deletePost, Post } from "@/services/postService";
+import { postService, Post } from "@/services/postService";
 import { jwtDecode } from "jwt-decode";
 import CommentSection from '@/components/CommentSection';
 import { Heart, HeartOff, MessageCircle, Pencil, Trash2, Send, UserCircle } from 'lucide-react';
@@ -102,19 +102,26 @@ export default function FeedPage() {
     setLoading(true);
     setError(null);
     try {
-      const postsData = view === 'all' 
-        ? await getAllPosts()
-        : await getFollowingPosts();
+      // Get posts based on the current view
+      const data = view === 'following' 
+        ? await postService.getFollowingPosts()
+        : await postService.getPosts();
       
       // Load comments for each post
       const postsWithComments = await Promise.all(
-        postsData.map(async (post) => {
+        data.map(async (post) => {
           try {
             const commentsResponse = await api.get<Comment[]>(`/Comment/post/${post.id}`);
-            return { ...post, comments: commentsResponse.data };
+            return {
+              ...post,
+              comments: commentsResponse.data
+            };
           } catch (err) {
             console.error(`Error fetching comments for post ${post.id}:`, err);
-            return { ...post, comments: [] };
+            return {
+              ...post,
+              comments: []
+            };
           }
         })
       );
@@ -123,7 +130,7 @@ export default function FeedPage() {
       
       // Load liked status for each post
       const likedStatuses = await Promise.all(
-        postsData.map(async (post) => {
+        data.map(async (post) => {
           try {
             const likeResponse = await api.get<{ hasLiked: boolean }>(`/Like/hasliked/${post.id}`);
             return { postId: post.id, hasLiked: likeResponse.data.hasLiked };
@@ -155,9 +162,34 @@ export default function FeedPage() {
     setSubmitting(true);
     setError(null);
     try {
-      const post = await createPost({ content: newPost });
-      setPosts([post, ...posts]);
+      // Create the post
+      const response = await postService.createPost({ content: newPost });
+      
+      // Fetch the complete post data including user information
+      const completePostResponse = await api.get<Post>(`/Post/${response.id}`);
+      const completePost = completePostResponse.data;
+      
+      // Fetch comments for the new post
+      const commentsResponse = await api.get<Comment[]>(`/Comment/post/${completePost.id}`);
+      const postWithComments = {
+        ...completePost,
+        comments: commentsResponse.data,
+        commentCount: commentsResponse.data.length
+      };
+      
+      // Update posts state with the complete post data
+      setPosts(prev => [postWithComments, ...prev]);
       setNewPost("");
+      
+      // Check if the current user has liked this post
+      try {
+        const likeResponse = await api.get<{ hasLiked: boolean }>(`/Like/hasliked/${completePost.id}`);
+        if (likeResponse.data.hasLiked) {
+          setLikedPosts(prev => new Set(prev).add(completePost.id));
+        }
+      } catch (err) {
+        console.error('Error checking like status:', err);
+      }
     } catch (err: any) {
       console.error('Error creating post:', err);
       if (err?.response?.status === 401) {
@@ -177,7 +209,7 @@ export default function FeedPage() {
     }
 
     try {
-      await deletePost(id);
+      await postService.deletePost(id);
       setPosts(posts.filter(post => post.id !== id));
     } catch (err: any) {
       console.error('Error deleting post:', err);
@@ -242,15 +274,26 @@ export default function FeedPage() {
     if (!newComment[postId]?.trim()) return;
     setCommentSubmitting(prev => ({ ...prev, [postId]: true }));
     try {
-      await api.post(`/Comment`, { content: newComment[postId], postId });
-      setNewComment(prev => ({ ...prev, [postId]: '' }));
-      // Refresh comments
-      const response = await api.get<Comment[]>(`/Comment/post/${postId}`);
+      // Submit the new comment
+      await api.post<Comment>(`/Comment`, { content: newComment[postId], postId });
+      
+      // Refetch all comments for this post to get the complete data
+      const commentsResponse = await api.get<Comment[]>(`/Comment/post/${postId}`);
+      const updatedComments = commentsResponse.data;
+      
+      // Update posts state with the refreshed comments using a single state update
       setPosts(prev => prev.map(post => 
         post.id === postId 
-          ? { ...post, comments: response.data, commentCount: response.data.length }
+          ? {
+              ...post,
+              comments: updatedComments,
+              commentCount: updatedComments.length
+            }
           : post
       ));
+      
+      // Clear the comment input after state update
+      setNewComment(prev => ({ ...prev, [postId]: '' }));
     } catch (err) {
       console.error('Error posting comment:', err);
       setError('Failed to post comment. Please try again.');
@@ -304,14 +347,30 @@ export default function FeedPage() {
 
     setDeleteSubmitting(commentId);
     try {
+      // Delete the comment
       await api.delete(`/Comment/${commentId}`);
       
-      // Remove the comment from the posts state
-      setPosts(prev => prev.map(post => ({
-        ...post,
-        comments: post.comments?.filter(comment => comment.id !== commentId) || [],
-        commentCount: post.comments?.filter(comment => comment.id !== commentId).length || 0
-      })));
+      // Find the post containing this comment
+      const postWithComment = posts.find(post => 
+        post.comments?.some(comment => comment.id === commentId)
+      );
+      
+      if (postWithComment) {
+        // Refetch all comments for this post
+        const commentsResponse = await api.get<Comment[]>(`/Comment/post/${postWithComment.id}`);
+        const updatedComments = commentsResponse.data;
+        
+        // Update posts state with a single state update
+        setPosts(prev => prev.map(post => 
+          post.id === postWithComment.id
+            ? {
+                ...post,
+                comments: updatedComments,
+                commentCount: updatedComments.length
+              }
+            : post
+        ));
+      }
     } catch (err) {
       console.error('Error deleting comment:', err);
       setError('Failed to delete comment. Please try again.');
@@ -354,6 +413,15 @@ export default function FeedPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             {error}
+          </div>
+        )}
+
+        {view === 'following' && posts.length === 0 && !loading && (
+          <div className="bg-blue-50 border border-blue-200 text-blue-600 px-4 py-3 rounded-lg mb-6 flex items-center">
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            You're not following anyone yet. Follow some users to see their posts here!
           </div>
         )}
 
@@ -511,10 +579,13 @@ export default function FeedPage() {
 
               {/* Comments Section */}
               <div className="p-4 space-y-4">
-                {post.comments && post.comments.length > 0 ? (
+                {Array.isArray(post.comments) && post.comments.length > 0 ? (
                   <div className="space-y-4">
                     {post.comments.map((comment) => (
-                      <div key={comment.id} className="bg-gray-50 rounded-lg p-4">
+                      <div 
+                        key={comment.id} 
+                        className="bg-gray-50 rounded-lg p-4"
+                      >
                         <div className="flex justify-between items-start mb-2">
                           <div className="flex items-center gap-2">
                             <Avatar className="h-8 w-8">

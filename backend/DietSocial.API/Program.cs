@@ -8,6 +8,7 @@ using DietSocial.API.Services;
 using DietSocial.API.Configuration;
 using AutoMapper;
 using DietSocial.API.Mapping;
+using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -67,6 +68,7 @@ builder.Services.AddAuthentication(options =>
 
 // Register services
 builder.Services.AddScoped<JwtService>();
+builder.Services.AddScoped<IFileStorageService, FileStorageService>();
 
 // Add CORS
 builder.Services.AddCors(options =>
@@ -129,6 +131,21 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Configure static files
+var imagesPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "images");
+if (!Directory.Exists(imagesPath))
+{
+    Directory.CreateDirectory(imagesPath);
+}
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(imagesPath),
+    RequestPath = "/images",
+    ServeUnknownFileTypes = true,
+    DefaultContentType = "application/octet-stream"
+});
 
 app.UseCors("AllowReactApp");
 

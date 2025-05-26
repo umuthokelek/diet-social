@@ -17,6 +17,9 @@ namespace DietSocial.API.Models
         [StringLength(500)]
         public string Content { get; set; } = string.Empty;
 
+        [StringLength(500)]
+        public string? ImageUrl { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

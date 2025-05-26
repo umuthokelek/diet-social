@@ -1,15 +1,17 @@
 "use client";
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createRecipe, RecipeRequest } from "@/services/recipeService";
+import { recipeService } from "@/services/recipeService";
+import ImageUpload from "@/components/ImageUpload";
 
 export default function NewRecipePage() {
-  const [form, setForm] = useState<RecipeRequest>({
+  const [form, setForm] = useState({
     title: "",
     description: "",
     ingredients: "",
-    calories: undefined,
+    calories: undefined as number | undefined,
   });
+  const [image, setImage] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -42,7 +44,18 @@ export default function NewRecipePage() {
         throw new Error("Calories must be greater than 0");
       }
 
-      await createRecipe(form);
+      const formData = new FormData();
+      formData.append('title', form.title.trim());
+      formData.append('description', form.description.trim());
+      formData.append('ingredients', form.ingredients.trim());
+      if (form.calories) {
+        formData.append('calories', form.calories.toString());
+      }
+      if (image) {
+        formData.append('image', image);
+      }
+
+      await recipeService.createRecipe(formData);
       router.push("/recipes");
     } catch (err: any) {
       console.error('Error creating recipe:', err);
@@ -63,16 +76,21 @@ export default function NewRecipePage() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block font-medium mb-1">Title</label>
-          <input
-            type="text"
-            name="title"
-            value={form.title}
-            onChange={handleChange}
-            required
-            maxLength={200}
-            className="w-full border rounded px-3 py-2"
-            placeholder="Enter recipe title"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              name="title"
+              value={form.title}
+              onChange={handleChange}
+              required
+              maxLength={200}
+              className="w-full border rounded px-3 py-2 pr-10"
+              placeholder="Enter recipe title"
+            />
+            <div className="absolute right-2 top-1/2 -translate-y-1/2">
+              <ImageUpload onImageSelect={setImage} />
+            </div>
+          </div>
         </div>
         <div>
           <label className="block font-medium mb-1">Description</label>

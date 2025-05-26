@@ -21,6 +21,9 @@ public class Recipe
     [StringLength(2000)]
     public string Ingredients { get; set; } = string.Empty;
 
+    [StringLength(500)]
+    public string? ImageUrl { get; set; }
+
     public int? Calories { get; set; }
 
     [Required]

@@ -3,6 +3,7 @@ import React, { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { getRecipe, updateRecipe, Recipe, RecipeRequest } from "@/services/recipeService";
 import { jwtDecode } from "jwt-decode";
+import { getImageUrl } from "@/lib/utils";
 
 interface JwtPayload {
   "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier": string;
@@ -17,6 +18,9 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
     ingredients: "",
     calories: undefined,
   });
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [removeImage, setRemoveImage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,8 +71,13 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
           title: recipeData.title,
           description: recipeData.description,
           ingredients: recipeData.ingredients,
-          calories: recipeData.calories,
+          calories: recipeData.calories ?? undefined,
         });
+        
+        // Set initial image preview if recipe has an image
+        if (recipeData.imageUrl) {
+          setImagePreview(getImageUrl(recipeData.imageUrl));
+        }
       } catch (err: any) {
         console.error('Error loading recipe:', err);
         if (err?.response?.status === 404) {
@@ -90,8 +99,27 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
     const { name, value } = e.target;
     setForm(prev => ({
       ...prev,
-      [name]: name === 'calories' ? (value ? parseInt(value) : undefined) : value
+      [name]: name === 'calories' 
+        ? (value === '' ? undefined : Number(value))
+        : value
     }));
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedImage(file);
+      setRemoveImage(false);
+      // Create preview URL
+      const previewUrl = URL.createObjectURL(file);
+      setImagePreview(previewUrl);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    setRemoveImage(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -100,7 +128,39 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
     setError(null);
 
     try {
-      await updateRecipe(id, form);
+      // Validate form
+      if (!form.title.trim()) {
+        throw new Error("Title is required");
+      }
+      if (!form.description.trim()) {
+        throw new Error("Description is required");
+      }
+      if (!form.ingredients.trim()) {
+        throw new Error("Ingredients are required");
+      }
+      if (form.calories !== undefined && form.calories < 0) {
+        throw new Error("Calories cannot be negative");
+      }
+
+      const formData = new FormData();
+      formData.append('title', form.title.trim());
+      formData.append('description', form.description.trim());
+      formData.append('ingredients', form.ingredients.trim());
+      
+      // Only append calories if it's a valid number
+      if (typeof form.calories === 'number' && !isNaN(form.calories)) {
+        formData.append('calories', form.calories.toString());
+      }
+
+      // Handle image
+      if (selectedImage) {
+        formData.append('image', selectedImage);
+      }
+      if (removeImage) {
+        formData.append('removeImage', 'true');
+      }
+
+      await updateRecipe(id, formData);
       router.push("/recipes");
     } catch (err: any) {
       console.error('Error updating recipe:', err);
@@ -110,7 +170,7 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
         setError("Please sign in to edit recipes.");
         router.push('/login');
       } else {
-        setError("Failed to update recipe. Please try again.");
+        setError(err.message || "Failed to update recipe. Please try again.");
       }
     } finally {
       setSaving(false);
@@ -185,11 +245,50 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
           <input
             type="number"
             name="calories"
-            value={form.calories || ''}
+            value={form.calories ?? ''}
             onChange={handleChange}
+            min="0"
             className="w-full border rounded px-3 py-2"
+            placeholder="Enter calories (optional)"
           />
         </div>
+        
+        {/* Image Preview and Management */}
+        <div className="space-y-2">
+          <label className="block font-medium mb-1">Recipe Image</label>
+          {imagePreview && (
+            <div className="relative w-full aspect-video mb-2">
+              <img
+                src={imagePreview}
+                alt="Recipe preview"
+                className="w-full h-full object-cover rounded-lg"
+              />
+            </div>
+          )}
+          <div className="flex gap-2">
+            <label className="flex-1">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageChange}
+                className="hidden"
+              />
+              <div className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded text-center cursor-pointer transition">
+                {imagePreview ? 'Change Image' : 'Add Image'}
+              </div>
+            </label>
+            {imagePreview && (
+              <button
+                type="button"
+                onClick={handleRemoveImage}
+                className="flex-1 bg-red-100 hover:bg-red-200 text-red-700 px-4 py-2 rounded transition"
+              >
+                Remove Image
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="flex gap-4">
           <button
             type="submit"

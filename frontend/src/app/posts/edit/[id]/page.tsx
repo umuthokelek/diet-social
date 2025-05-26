@@ -3,22 +3,20 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { jwtDecode } from 'jwt-decode';
-import api from '@/services/api';
+import { postService, Post } from '@/services/postService';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { Loader2 } from 'lucide-react';
+import ImageUpload from '@/components/ImageUpload';
 
 interface JwtPayload {
   "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier": string;
 }
 
-interface Post {
-  id: string;
-  userId: string;
-  content: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 interface EditPostForm {
   content: string;
+  image?: File;
+  removeImage?: boolean;
 }
 
 export default function EditPostPage() {
@@ -63,8 +61,7 @@ export default function EditPostPage() {
         }
 
         // Fetch post details
-        const response = await api.get<Post>(`/Post/${postId}`);
-        const postData = response.data;
+        const postData = await postService.getPost(postId);
         setPost(postData);
         setFormData({ content: postData.content });
 
@@ -82,13 +79,10 @@ export default function EditPostPage() {
         }
       } catch (err: any) {
         console.error('Error loading post:', err);
-        if (err?.response?.status === 404) {
+        if (err.response?.status === 404) {
           setError('Post not found');
-        } else if (err?.response?.status === 401) {
-          setError('Please sign in to edit posts');
-          router.push('/login');
         } else {
-          setError('Failed to load post. Please try again.');
+          setError('Failed to load post. Please try again later.');
         }
       } finally {
         setLoading(false);
@@ -100,38 +94,39 @@ export default function EditPostPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.content.trim()) {
-      setError('Content cannot be empty');
-      return;
-    }
+    if (!post) return;
 
     setSubmitting(true);
     setError(null);
 
     try {
-      await api.put(`/Post/${postId}`, formData);
+      const updatedPost = await postService.updatePost(postId, formData);
+      setPost(updatedPost);
       router.push('/feed');
     } catch (err: any) {
       console.error('Error updating post:', err);
-      if (err?.response?.status === 403) {
-        setError('You do not have permission to edit this post');
-      } else if (err?.response?.status === 401) {
-        setError('Please sign in to edit posts');
-        router.push('/login');
-      } else {
-        setError('Failed to update post. Please try again.');
-      }
+      setError(err.response?.data?.message || 'Failed to update post');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setFormData(prev => ({ ...prev, content: e.target.value }));
+  };
+
+  const handleImageChange = (file: File | null) => {
+    setFormData(prev => ({
+      ...prev,
+      image: file || undefined,
+      removeImage: !file && !!post?.imageUrl
+    }));
+  };
+
   if (loading) {
     return (
-      <div className="max-w-2xl mx-auto py-8 px-4">
-        <div className="flex justify-center items-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-        </div>
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
@@ -139,7 +134,7 @@ export default function EditPostPage() {
   if (error) {
     return (
       <div className="max-w-2xl mx-auto py-8 px-4">
-        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded">
+        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg">
           {error}
         </div>
       </div>
@@ -147,69 +142,45 @@ export default function EditPostPage() {
   }
 
   if (!post) {
-    return (
-      <div className="max-w-2xl mx-auto py-8 px-4">
-        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded">
-          Post not found
-        </div>
-      </div>
-    );
-  }
-
-  // Only render the form if the user owns the post
-  if (post && currentUserId && post.userId !== currentUserId) {
-    return (
-      <div className="max-w-2xl mx-auto py-8 px-4">
-        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded">
-          You do not have permission to edit this post.
-        </div>
-      </div>
-    );
+    return null;
   }
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Edit Post</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Last updated: {new Date(post.updatedAt).toLocaleString()}
-        </p>
-      </div>
-
+      <h1 className="text-2xl font-bold mb-6">Edit Post</h1>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label htmlFor="content" className="block text-sm font-medium text-gray-700 mb-1">
-            Content
-          </label>
-          <textarea
-            id="content"
+          <Textarea
             value={formData.content}
-            onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-            className="w-full border rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            rows={5}
+            onChange={handleContentChange}
             placeholder="What's on your mind?"
-            maxLength={500}
+            className="min-h-[200px]"
+            required
           />
-          <p className="text-sm text-gray-500 mt-1">
-            {formData.content.length}/500 characters
-          </p>
         </div>
-
-        <div className="flex gap-4">
-          <button
-            type="submit"
-            disabled={submitting || !formData.content.trim()}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition disabled:opacity-50"
-          >
-            {submitting ? 'Saving...' : 'Save Changes'}
-          </button>
-          <button
+        <div>
+          <ImageUpload
+            onImageSelect={handleImageChange}
+          />
+        </div>
+        <div className="flex justify-end space-x-4">
+          <Button
             type="button"
+            variant="outline"
             onClick={() => router.push('/feed')}
-            className="bg-gray-100 text-gray-700 px-4 py-2 rounded hover:bg-gray-200 transition"
           >
             Cancel
-          </button>
+          </Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              'Save Changes'
+            )}
+          </Button>
         </div>
       </form>
     </div>

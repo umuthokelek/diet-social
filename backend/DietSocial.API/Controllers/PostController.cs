@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using DietSocial.API.Data;
 using DietSocial.API.Models;
 using DietSocial.API.Models.DTOs;
 using DietSocial.API.Extensions;
+using DietSocial.API.Services;
 
 namespace DietSocial.API.Controllers
 {
@@ -17,10 +19,12 @@ namespace DietSocial.API.Controllers
     public class PostController : BaseController
     {
         private readonly ApplicationDbContext _context;
+        private readonly IFileStorageService _fileStorageService;
 
-        public PostController(ApplicationDbContext context)
+        public PostController(ApplicationDbContext context, IFileStorageService fileStorageService)
         {
             _context = context;
+            _fileStorageService = fileStorageService;
         }
 
         [HttpGet]
@@ -34,6 +38,7 @@ namespace DietSocial.API.Controllers
                 {
                     Id = p.Id,
                     Content = p.Content,
+                    ImageUrl = p.ImageUrl,
                     CreatedAt = p.CreatedAt,
                     UpdatedAt = p.UpdatedAt,
                     UserDisplayName = p.User!.DisplayName,
@@ -64,6 +69,7 @@ namespace DietSocial.API.Controllers
                 {
                     Id = p.Id,
                     Content = p.Content,
+                    ImageUrl = p.ImageUrl,
                     CreatedAt = p.CreatedAt,
                     UpdatedAt = p.UpdatedAt,
                     UserDisplayName = p.User!.DisplayName,
@@ -95,6 +101,7 @@ namespace DietSocial.API.Controllers
             {
                 Id = post.Id,
                 Content = post.Content,
+                ImageUrl = post.ImageUrl,
                 CreatedAt = post.CreatedAt,
                 UpdatedAt = post.UpdatedAt,
                 UserId = post.UserId,
@@ -106,7 +113,7 @@ namespace DietSocial.API.Controllers
 
         [Authorize]
         [HttpPost]
-        public async Task<IActionResult> CreatePost(CreatePostRequest request)
+        public async Task<IActionResult> CreatePost([FromForm] CreatePostRequest request)
         {
             if (string.IsNullOrWhiteSpace(request.Content))
             {
@@ -124,11 +131,25 @@ namespace DietSocial.API.Controllers
                 return Unauthorized();
             }
 
+            string? imageUrl = null;
+            if (request.Image != null)
+            {
+                try
+                {
+                    imageUrl = await _fileStorageService.SaveImageAsync(request.Image);
+                }
+                catch (ArgumentException ex)
+                {
+                    return BadRequest(new { Message = ex.Message });
+                }
+            }
+
             var post = new Post
             {
                 Id = Guid.NewGuid(),
                 UserId = userId.Value,
                 Content = request.Content.Trim(),
+                ImageUrl = imageUrl,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -141,7 +162,7 @@ namespace DietSocial.API.Controllers
 
         [Authorize]
         [HttpPut("{id}")]
-        public async Task<IActionResult> UpdatePost(Guid id, UpdatePostRequest request)
+        public async Task<IActionResult> UpdatePost(Guid id, [FromForm] UpdatePostRequest request)
         {
             if (string.IsNullOrWhiteSpace(request.Content))
             {
@@ -168,6 +189,35 @@ namespace DietSocial.API.Controllers
             if (post.UserId != userId.Value)
             {
                 return Forbid();
+            }
+
+            // Handle image update
+            if (request.Image != null)
+            {
+                try
+                {
+                    // Delete old image if exists
+                    if (!string.IsNullOrEmpty(post.ImageUrl))
+                    {
+                        _fileStorageService.DeleteImage(post.ImageUrl);
+                    }
+
+                    // Save new image
+                    post.ImageUrl = await _fileStorageService.SaveImageAsync(request.Image);
+                }
+                catch (ArgumentException ex)
+                {
+                    return BadRequest(new { Message = ex.Message });
+                }
+            }
+            else if (request.RemoveImage)
+            {
+                // Delete old image if exists
+                if (!string.IsNullOrEmpty(post.ImageUrl))
+                {
+                    _fileStorageService.DeleteImage(post.ImageUrl);
+                    post.ImageUrl = null;
+                }
             }
 
             post.Content = request.Content.Trim();
@@ -209,6 +259,12 @@ namespace DietSocial.API.Controllers
                 return Forbid();
             }
 
+            // Delete associated image if exists
+            if (!string.IsNullOrEmpty(post.ImageUrl))
+            {
+                _fileStorageService.DeleteImage(post.ImageUrl);
+            }
+
             _context.Posts.Remove(post);
             await _context.SaveChangesAsync();
 
@@ -224,10 +280,13 @@ namespace DietSocial.API.Controllers
     public class UpdatePostRequest
     {
         public string Content { get; set; } = string.Empty;
+        public IFormFile? Image { get; set; }
+        public bool RemoveImage { get; set; }
     }
 
     public class CreatePostRequest
     {
         public string Content { get; set; } = string.Empty;
+        public IFormFile? Image { get; set; }
     }
 } 

@@ -22,9 +22,26 @@ import {
 import { getRecipesByUserId, Recipe, deleteRecipe } from '@/services/recipeService';
 import api from '@/services/api';
 import CommentLikeButton from './CommentLikeButton';
+import RecipeCard from './RecipeCard';
+import { getImageUrl } from '@/utils/imageUtils';
+
+interface User {
+  id: string;
+  displayName?: string;
+  bio?: string;
+  profileImageUrl?: string;
+  postCount?: number;
+  followerCount?: number;
+  followingCount?: number;
+}
 
 interface UserProfileProps {
-    userId: string;
+  userId: string;
+  user?: User;
+  isCurrentUser?: boolean;
+  onFollow?: () => void;
+  onUnfollow?: () => void;
+  isFollowing?: boolean;
 }
 
 interface LikeUser {
@@ -44,12 +61,34 @@ interface CommentWithLikes extends Comment {
     likes: { id: string }[];
 }
 
-export function UserProfile({ userId }: UserProfileProps) {
+const defaultUser: User = {
+  id: '',
+  displayName: undefined,
+  bio: undefined,
+  profileImageUrl: undefined,
+  postCount: undefined,
+  followerCount: undefined,
+  followingCount: undefined
+};
+
+export default function UserProfile(props: UserProfileProps) {
+    // Debug logging
+    console.log("UserProfile received:", props.user);
+
+    const {
+        userId,
+        user,
+        isCurrentUser = false,
+        onFollow,
+        onUnfollow,
+        isFollowing = false
+    } = props;
+
     const [profile, setProfile] = useState<Profile | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const router = useRouter();
-    const { user, loading: isAuthLoading } = useAuth();
+    const { user: authUser, loading: isAuthLoading } = useAuth();
     const [followStatus, setFollowStatus] = useState<FollowStatus | null>(null);
     const [isUpdating, setIsUpdating] = useState(false);
     const [activeTab, setActiveTab] = useState('posts');
@@ -65,7 +104,16 @@ export function UserProfile({ userId }: UserProfileProps) {
     const [recipes, setRecipes] = useState<Recipe[]>([]);
     const [loadingRecipes, setLoadingRecipes] = useState(false);
 
-    const isOwnProfile = !isAuthLoading && user?.id && userId ? user.id === userId : false;
+    // Safe access to user properties with fallbacks
+    const displayName = user?.displayName ?? 'Anonymous';
+    const avatarInitial = user?.displayName?.charAt(0).toUpperCase() ?? 'U';
+    const profileImageUrl = user?.profileImageUrl ? getImageUrl(user.profileImageUrl) : null;
+    const postCount = user?.postCount ?? 0;
+    const followerCount = followStatus?.followerCount ?? 0;
+    const followingCount = followStatus?.followingCount ?? 0;
+
+    // Log the constructed image URL for verification
+    console.log('UserProfile image URL:', profileImageUrl);
 
     useEffect(() => {
         const fetchProfile = async () => {
@@ -152,7 +200,7 @@ export function UserProfile({ userId }: UserProfileProps) {
     }, [userId]);
 
     useEffect(() => {
-        if (!isAuthLoading && !isOwnProfile) {
+        if (!isAuthLoading && !isCurrentUser) {
             const loadFollowStatus = async () => {
                 try {
                     const status = await followService.getFollowStatus(userId);
@@ -165,7 +213,7 @@ export function UserProfile({ userId }: UserProfileProps) {
 
             loadFollowStatus();
         }
-    }, [userId, isAuthLoading, isOwnProfile]);
+    }, [userId, isAuthLoading, isCurrentUser]);
 
     useEffect(() => {
         const loadRecipes = async () => {
@@ -189,7 +237,7 @@ export function UserProfile({ userId }: UserProfileProps) {
     }, [userId, activeTab]);
 
     const handleFollowToggle = async () => {
-        if (isOwnProfile || !followStatus) return;
+        if (isCurrentUser || !followStatus) return;
 
         try {
             setIsUpdating(true);
@@ -197,6 +245,7 @@ export function UserProfile({ userId }: UserProfileProps) {
 
             if (followStatus.isFollowing) {
                 await followService.unfollowUser(userId);
+                // Update local state immediately
                 setFollowStatus(prev => prev ? {
                     ...prev,
                     isFollowing: false,
@@ -204,6 +253,7 @@ export function UserProfile({ userId }: UserProfileProps) {
                 } : null);
             } else {
                 await followService.followUser(userId);
+                // Update local state immediately
                 setFollowStatus(prev => prev ? {
                     ...prev,
                     isFollowing: true,
@@ -213,6 +263,9 @@ export function UserProfile({ userId }: UserProfileProps) {
         } catch (err) {
             console.error('Error updating follow status:', err);
             setError('Failed to update follow status');
+            // Revert the optimistic update on error
+            const updatedStatus = await followService.getFollowStatus(userId);
+            setFollowStatus(updatedStatus);
         } finally {
             setIsUpdating(false);
         }
@@ -244,7 +297,7 @@ export function UserProfile({ userId }: UserProfileProps) {
                     ...prev,
                     posts: prev.posts.map(post => post.id === postId ? { ...post, likeCount: post.likeCount + 1 } : post)
                 } : null);
-                if (user?.id) {
+                if (authUser?.id) {
                     const response = await api.get<LikeUser[]>(`/Like/users/${postId}`);
                     setLikedUsers(prev => ({
                         ...prev,
@@ -425,10 +478,10 @@ export function UserProfile({ userId }: UserProfileProps) {
         );
     }
 
-    if (error || !profile) {
+    if (error) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[50vh] space-y-4 px-4">
-                <div className="text-red-500 text-lg text-center">{error || 'Profile not found'}</div>
+                <div className="text-red-500 text-lg text-center">{error}</div>
                 <Button onClick={() => router.back()}>
                     Go Back
                 </Button>
@@ -437,79 +490,104 @@ export function UserProfile({ userId }: UserProfileProps) {
     }
 
     return (
-        <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="container mx-auto px-4 py-8">
             <Card className="mb-8">
-                <CardHeader>
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-4">
-                            <Avatar className="h-16 w-16">
-                                <AvatarFallback className="text-lg">
-                                    {profile.displayName.charAt(0).toUpperCase()}
+                <CardContent className="p-6">
+                    <div className="flex items-center space-x-4">
+                        <Avatar className="h-20 w-20">
+                            {profileImageUrl ? (
+                                <img src={profileImageUrl} alt={displayName} />
+                            ) : (
+                                <AvatarFallback className="text-2xl">
+                                    {avatarInitial}
                                 </AvatarFallback>
-                            </Avatar>
-                            <div>
-                                <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                                    {isOwnProfile ? 'Your Profile' : profile.displayName}
-                                </h1>
-                                <div className="flex items-center space-x-4 mt-2">
-                                    <Badge className="text-sm bg-gray-100 text-gray-700">
-                                        {profile.postCount} {profile.postCount === 1 ? 'post' : 'posts'}
-                                    </Badge>
-                                    {followStatus && (
-                                        <>
-                                            <Badge className="text-sm bg-gray-100 text-gray-700">
-                                                {followStatus.followerCount} Followers
-                                            </Badge>
-                                            <Badge className="text-sm bg-gray-100 text-gray-700">
-                                                {followStatus.followingCount} Following
-                                            </Badge>
-                                        </>
-                                    )}
+                            )}
+                        </Avatar>
+                        <div className="flex-1">
+                            <h1 className="text-2xl font-bold">{displayName}</h1>
+                            {user?.bio && <p className="text-gray-600">{user.bio}</p>}
+                            <div className="flex gap-4 mt-2">
+                                <div className="text-sm">
+                                    <span className="font-semibold">{postCount}</span> posts
+                                </div>
+                                <div className="text-sm">
+                                    <span className="font-semibold">{followStatus?.followerCount ?? 0}</span> followers
+                                </div>
+                                <div className="text-sm">
+                                    <span className="font-semibold">{followStatus?.followingCount ?? 0}</span> following
                                 </div>
                             </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                            {isOwnProfile && (
-                                <Button variant="outline" size="sm" className="gap-2">
-                                    <Pencil className="h-4 w-4" />
-                                    Edit Profile
-                                </Button>
-                            )}
-                            {!isAuthLoading && !isOwnProfile && followStatus && (
-                                <Button
-                                    onClick={handleFollowToggle}
-                                    disabled={isUpdating}
-                                    variant={followStatus.isFollowing ? "outline" : "default"}
-                                    className="min-w-[100px]"
-                                >
-                                    {isUpdating ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : followStatus.isFollowing ? (
-                                        'Unfollow'
-                                    ) : (
-                                        'Follow'
-                                    )}
-                                </Button>
-                            )}
-                        </div>
+                        {!isCurrentUser && (
+                            <Button
+                                variant={followStatus?.isFollowing ? "outline" : "default"}
+                                className={followStatus?.isFollowing ? "text-red-600 border-red-600 hover:bg-red-50" : ""}
+                                onClick={handleFollowToggle}
+                                disabled={isUpdating}
+                            >
+                                {isUpdating ? (
+                                    <div className="flex items-center">
+                                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                                        Updating
+                                    </div>
+                                ) : (
+                                    followStatus?.isFollowing ? "Unfollow" : "Follow"
+                                )}
+                            </Button>
+                        )}
+                        {isCurrentUser && (
+                            <Button
+                                variant="outline"
+                                onClick={() => router.push('/profile/edit')}
+                            >
+                                Edit Profile
+                            </Button>
+                        )}
                     </div>
-                </CardHeader>
+                </CardContent>
             </Card>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2 mb-8">
-                    <TabsTrigger value="posts">Posts</TabsTrigger>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+                <TabsList>
                     <TabsTrigger value="recipes">Recipes</TabsTrigger>
+                    <TabsTrigger value="posts">Posts</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="posts">
-                    {profile.posts.length === 0 ? (
-                        <Card>
-                            <CardContent className="py-8">
-                                <div className="text-center text-gray-500">
-                                    {isOwnProfile ? "You haven't posted anything yet." : "This user hasn't posted anything yet."}
-                                </div>
-                            </CardContent>
+                <TabsContent value="recipes" className="space-y-4">
+                    {loadingRecipes ? (
+                        <div className="flex justify-center items-center py-8">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                        </div>
+                    ) : recipes.length === 0 ? (
+                        <Card className="p-6 text-center text-gray-500">
+                            {isCurrentUser
+                                ? "You haven't shared any recipes yet."
+                                : `${displayName} hasn't shared any recipes yet.`}
+                        </Card>
+                    ) : (
+                        <div className="space-y-6">
+                            {recipes.map((recipe) => (
+                                <RecipeCard
+                                    key={recipe.id}
+                                    recipe={recipe}
+                                    isOwner={isCurrentUser}
+                                    onDelete={handleDeleteRecipe}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </TabsContent>
+
+                <TabsContent value="posts" className="space-y-4">
+                    {!profile ? (
+                        <div className="flex justify-center items-center py-8">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                        </div>
+                    ) : profile.posts.length === 0 ? (
+                        <Card className="p-6 text-center text-gray-500">
+                            {isCurrentUser
+                                ? "You haven't made any posts yet."
+                                : `${displayName} hasn't made any posts yet.`}
                         </Card>
                     ) : (
                         <div className="space-y-6">
@@ -541,7 +619,7 @@ export function UserProfile({ userId }: UserProfileProps) {
                                                     </p>
                                                 </div>
                                             </div>
-                                            {isOwnProfile && (
+                                            {isCurrentUser && (
                                                 <div className="flex gap-1">
                                                     <TooltipProvider>
                                                         <Tooltip>
@@ -659,7 +737,7 @@ export function UserProfile({ userId }: UserProfileProps) {
                                                                     </p>
                                                                 </div>
                                                             </div>
-                                                            {user?.id === comment.userId && (
+                                                            {authUser?.id === comment.userId && (
                                                                 <div className="flex gap-1">
                                                                     <Button
                                                                         variant="ghost"
@@ -770,114 +848,6 @@ export function UserProfile({ userId }: UserProfileProps) {
                                             </Button>
                                         </div>
                                     </div>
-                                </Card>
-                            ))}
-                        </div>
-                    )}
-                </TabsContent>
-
-                <TabsContent value="recipes">
-                    {loadingRecipes ? (
-                        <div className="flex justify-center items-center py-8">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                        </div>
-                    ) : recipes.length === 0 ? (
-                        <Card>
-                            <CardContent className="py-8">
-                                <div className="text-center text-gray-500">
-                                    {isOwnProfile ? "You haven't shared any recipes yet." : "This user hasn't shared any recipes yet."}
-                                </div>
-                            </CardContent>
-                        </Card>
-                    ) : (
-                        <div className="space-y-6">
-                            {recipes.map((recipe) => (
-                                <Card key={recipe.id}>
-                                    <CardHeader className="pb-4">
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex items-center space-x-3">
-                                                <Avatar className="h-10 w-10">
-                                                    <AvatarFallback>
-                                                        {recipe.userDisplayName.charAt(0).toUpperCase()}
-                                                    </AvatarFallback>
-                                                </Avatar>
-                                                <div>
-                                                    <Link
-                                                        href={`/profile/${recipe.userId}`}
-                                                        className="font-semibold text-gray-900 hover:text-blue-600 transition-colors"
-                                                    >
-                                                        {recipe.userDisplayName}
-                                                    </Link>
-                                                    <p className="text-sm text-gray-500">
-                                                        {new Date(recipe.createdAt).toLocaleDateString('en-US', {
-                                                            year: 'numeric',
-                                                            month: 'short',
-                                                            day: 'numeric',
-                                                            hour: '2-digit',
-                                                            minute: '2-digit'
-                                                        })}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            {isOwnProfile && (
-                                                <div className="flex gap-1">
-                                                    <TooltipProvider>
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Link href={`/recipes/edit/${recipe.id}`}>
-                                                                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                                        <Pencil className="h-4 w-4" />
-                                                                    </Button>
-                                                                </Link>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent>Edit recipe</TooltipContent>
-                                                        </Tooltip>
-                                                    </TooltipProvider>
-                                                    <TooltipProvider>
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon"
-                                                                    className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-                                                                    onClick={() => handleDeleteRecipe(recipe.id)}
-                                                                >
-                                                                    <Trash2 className="h-4 w-4" />
-                                                                </Button>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent>Delete recipe</TooltipContent>
-                                                        </Tooltip>
-                                                    </TooltipProvider>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </CardHeader>
-
-                                    <CardContent className="space-y-4">
-                                        <div>
-                                            <h2 className="text-2xl font-semibold mb-2">{recipe.title}</h2>
-                                            <p className="text-gray-700 whitespace-pre-wrap">{recipe.description}</p>
-                                        </div>
-
-                                        <Separator />
-
-                                        <div>
-                                            <h3 className="font-medium text-gray-900 mb-2">Ingredients</h3>
-                                            <p className="text-gray-700 whitespace-pre-wrap">{recipe.ingredients}</p>
-                                        </div>
-
-                                        {recipe.calories && (
-                                            <>
-                                                <Separator />
-                                                <div>
-                                                    <h3 className="font-medium text-gray-900 mb-2">Nutrition</h3>
-                                                    <Badge className="text-sm bg-gray-100 text-gray-700">
-                                                        {recipe.calories} calories
-                                                    </Badge>
-                                                </div>
-                                            </>
-                                        )}
-                                    </CardContent>
                                 </Card>
                             ))}
                         </div>

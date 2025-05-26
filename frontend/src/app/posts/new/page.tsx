@@ -2,12 +2,14 @@
 
 import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { postService } from '@/services/posts';
+import { postService } from '@/services/postService';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import ImageUpload from '@/components/ImageUpload';
 
 export default function NewPostPage() {
   const router = useRouter();
   const [content, setContent] = useState('');
+  const [image, setImage] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [charCount, setCharCount] = useState(0);
@@ -34,7 +36,10 @@ export default function NewPostPage() {
     setIsLoading(true);
 
     try {
-      await postService.createPost(trimmedContent);
+      await postService.createPost({
+        content: trimmedContent,
+        image: image || undefined
+      });
       router.push('/feed');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to create post');
@@ -65,16 +70,19 @@ export default function NewPostPage() {
             <label htmlFor="content" className="block text-sm font-medium text-gray-700">
               What's on your mind?
             </label>
-            <div className="mt-1">
+            <div className="mt-1 relative">
               <textarea
                 id="content"
                 name="content"
                 rows={4}
-                className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
+                className="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md pr-10"
                 value={content}
                 onChange={handleContentChange}
                 placeholder="Share your thoughts..."
               />
+              <div className="absolute right-2 bottom-2">
+                <ImageUpload onImageSelect={setImage} />
+              </div>
             </div>
             <div className="mt-2 flex justify-end">
               <span className={`text-sm ${charCount === MAX_CHARS ? 'text-red-500' : 'text-gray-500'}`}>
