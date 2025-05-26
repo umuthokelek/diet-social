@@ -29,6 +29,7 @@ public class User
     public ICollection<DietLog> DietLogs { get; set; } = new List<DietLog>();
     public ICollection<Comment> Comments { get; set; } = new List<Comment>();
     public ICollection<Like> Likes { get; set; } = new List<Like>();
+    public ICollection<CommentLike> CommentLikes { get; set; } = new List<CommentLike>();
 
     // Follow relationships
     public ICollection<Follow> Followers { get; set; } = new List<Follow>();

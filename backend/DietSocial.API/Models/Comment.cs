@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -28,4 +29,6 @@ public class Comment
 
     [ForeignKey(nameof(UserId))]
     public User? User { get; set; }
+
+    public ICollection<CommentLike> Likes { get; set; } = new List<CommentLike>();
 } 

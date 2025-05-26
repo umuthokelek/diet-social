@@ -55,6 +55,20 @@ public class RecipeController : BaseController
         return Ok(recipes);
     }
 
+    [HttpGet("user/{userId}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<IEnumerable<RecipeResponse>>> GetRecipesByUserId(Guid userId)
+    {
+        var recipes = await _context.Recipes
+            .Include(r => r.User)
+            .Where(r => r.UserId == userId)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => _mapper.Map<RecipeResponse>(r))
+            .ToListAsync();
+
+        return Ok(recipes);
+    }
+
     [HttpGet("{id}")]
     public async Task<ActionResult<RecipeResponse>> GetRecipe(Guid id)
     {

@@ -14,7 +14,7 @@ namespace DietSocial.API.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    public class PostController : ControllerBase
+    public class PostController : BaseController
     {
         private readonly ApplicationDbContext _context;
 
@@ -24,6 +24,7 @@ namespace DietSocial.API.Controllers
         }
 
         [HttpGet]
+        [AllowAnonymous]
         public async Task<IActionResult> GetPosts()
         {
             var posts = await _context.Posts
@@ -34,6 +35,7 @@ namespace DietSocial.API.Controllers
                     Id = p.Id,
                     Content = p.Content,
                     CreatedAt = p.CreatedAt,
+                    UpdatedAt = p.UpdatedAt,
                     UserDisplayName = p.User!.DisplayName,
                     UserId = p.UserId,
                     LikeCount = p.Likes.Count,
@@ -42,6 +44,64 @@ namespace DietSocial.API.Controllers
                 .ToListAsync();
 
             return Ok(posts);
+        }
+
+        [HttpGet("following")]
+        [Authorize]
+        public async Task<IActionResult> GetFollowingPosts()
+        {
+            var userId = GetCurrentUserId();
+            var followingIds = await _context.Follows
+                .Where(f => f.FollowerId == userId)
+                .Select(f => f.FollowingId)
+                .ToListAsync();
+
+            var posts = await _context.Posts
+                .Include(p => p.User)
+                .Where(p => followingIds.Contains(p.UserId))
+                .OrderByDescending(p => p.CreatedAt)
+                .Select(p => new PostResponse
+                {
+                    Id = p.Id,
+                    Content = p.Content,
+                    CreatedAt = p.CreatedAt,
+                    UpdatedAt = p.UpdatedAt,
+                    UserDisplayName = p.User!.DisplayName,
+                    UserId = p.UserId,
+                    LikeCount = p.Likes.Count,
+                    CommentCount = p.Comments.Count
+                })
+                .ToListAsync();
+
+            return Ok(posts);
+        }
+
+        [HttpGet("{id}")]
+        [AllowAnonymous]
+        public async Task<ActionResult<PostResponse>> GetPost(Guid id)
+        {
+            var post = await _context.Posts
+                .Include(p => p.User)
+                .Include(p => p.Comments)
+                .Include(p => p.Likes)
+                .FirstOrDefaultAsync(p => p.Id == id);
+
+            if (post == null)
+            {
+                return NotFound();
+            }
+
+            return Ok(new PostResponse
+            {
+                Id = post.Id,
+                Content = post.Content,
+                CreatedAt = post.CreatedAt,
+                UpdatedAt = post.UpdatedAt,
+                UserId = post.UserId,
+                UserDisplayName = post.User!.DisplayName,
+                LikeCount = post.Likes.Count,
+                CommentCount = post.Comments.Count
+            });
         }
 
         [Authorize]

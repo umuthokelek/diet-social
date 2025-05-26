@@ -15,6 +15,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<DietLog> DietLogs { get; set; }
     public DbSet<Comment> Comments { get; set; }
     public DbSet<Like> Likes { get; set; }
+    public DbSet<CommentLike> CommentLikes { get; set; }
     public DbSet<Follow> Follows { get; set; }
     public DbSet<Notification> Notifications { get; set; }
     public DbSet<Recipe> Recipes { get; set; }
@@ -67,6 +68,25 @@ public class ApplicationDbContext : DbContext
             .HasIndex(l => new { l.UserId, l.PostId })
             .IsUnique();
 
+        builder.Entity<CommentLike>()
+            .HasKey(cl => cl.Id);
+
+        builder.Entity<CommentLike>()
+            .HasOne(cl => cl.Comment)
+            .WithMany(c => c.Likes)
+            .HasForeignKey(cl => cl.CommentId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<CommentLike>()
+            .HasOne(cl => cl.User)
+            .WithMany(u => u.CommentLikes)
+            .HasForeignKey(cl => cl.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<CommentLike>()
+            .HasIndex(cl => new { cl.CommentId, cl.UserId })
+            .IsUnique();
+
         builder.Entity<Follow>()
             .HasKey(f => f.Id);
 
@@ -77,17 +97,17 @@ public class ApplicationDbContext : DbContext
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<Follow>()
-            .HasOne(f => f.Followed)
+            .HasOne(f => f.Following)
             .WithMany(u => u.Followers)
-            .HasForeignKey(f => f.FollowedId)
+            .HasForeignKey(f => f.FollowingId)
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<Follow>()
-            .HasIndex(f => new { f.FollowerId, f.FollowedId })
+            .HasIndex(f => new { f.FollowerId, f.FollowingId })
             .IsUnique();
 
         builder.Entity<Follow>()
-            .HasCheckConstraint("CK_Follows_NotSelfFollow", "FollowerId != FollowedId");
+            .HasCheckConstraint("CK_Follows_NotSelfFollow", "\"FollowerId\" != \"FollowingId\"");
 
         builder.Entity<Notification>()
             .HasOne(n => n.User)

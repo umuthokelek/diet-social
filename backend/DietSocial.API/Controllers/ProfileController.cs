@@ -62,16 +62,5 @@ public class ProfileResponse
     public Guid UserId { get; set; }
     public string DisplayName { get; set; } = string.Empty;
     public int PostCount { get; set; }
-    public List<PostResponse> Posts { get; set; } = new();
-}
-
-public class PostResponse
-{
-    public Guid Id { get; set; }
-    public string Content { get; set; } = string.Empty;
-    public DateTime CreatedAt { get; set; }
-    public Guid UserId { get; set; }
-    public string UserDisplayName { get; set; } = string.Empty;
-    public int LikeCount { get; set; }
-    public int CommentCount { get; set; }
+    public List<DietSocial.API.Models.DTOs.PostResponse> Posts { get; set; } = new();
 } 

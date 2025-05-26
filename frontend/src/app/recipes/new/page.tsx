@@ -8,25 +8,50 @@ export default function NewRecipePage() {
     title: "",
     description: "",
     ingredients: "",
-    calories: "",
+    calories: undefined,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setForm(prev => ({
+      ...prev,
+      [name]: name === 'calories' ? (value ? parseInt(value) : undefined) : value
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+
     try {
+      // Validate form
+      if (!form.title.trim()) {
+        throw new Error("Title is required");
+      }
+      if (!form.description.trim()) {
+        throw new Error("Description is required");
+      }
+      if (!form.ingredients.trim()) {
+        throw new Error("Ingredients are required");
+      }
+      if (form.calories !== undefined && form.calories <= 0) {
+        throw new Error("Calories must be greater than 0");
+      }
+
       await createRecipe(form);
       router.push("/recipes");
-    } catch (err) {
-      setError("Failed to create recipe. Please try again.");
+    } catch (err: any) {
+      console.error('Error creating recipe:', err);
+      if (err?.response?.status === 401) {
+        setError("Please sign in to create recipes.");
+        router.push('/login');
+      } else {
+        setError(err.message || "Failed to create recipe. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
@@ -44,7 +69,9 @@ export default function NewRecipePage() {
             value={form.title}
             onChange={handleChange}
             required
+            maxLength={200}
             className="w-full border rounded px-3 py-2"
+            placeholder="Enter recipe title"
           />
         </div>
         <div>
@@ -54,8 +81,10 @@ export default function NewRecipePage() {
             value={form.description}
             onChange={handleChange}
             required
+            maxLength={2000}
             rows={3}
             className="w-full border rounded px-3 py-2"
+            placeholder="Describe your recipe"
           />
         </div>
         <div>
@@ -65,28 +94,45 @@ export default function NewRecipePage() {
             value={form.ingredients}
             onChange={handleChange}
             required
-            rows={2}
+            maxLength={2000}
+            rows={3}
             className="w-full border rounded px-3 py-2"
+            placeholder="List the ingredients (one per line)"
           />
         </div>
         <div>
           <label className="block font-medium mb-1">Calories</label>
           <input
-            type="text"
+            type="number"
             name="calories"
-            value={form.calories}
+            value={form.calories || ''}
             onChange={handleChange}
+            min="0"
             className="w-full border rounded px-3 py-2"
+            placeholder="Enter calories (optional)"
           />
         </div>
-        {error && <div className="text-red-500">{error}</div>}
-        <button
-          type="submit"
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
-          disabled={loading}
-        >
-          {loading ? "Creating..." : "Create Recipe"}
-        </button>
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded">
+            {error}
+          </div>
+        )}
+        <div className="flex gap-4">
+          <button
+            type="submit"
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition"
+            disabled={loading}
+          >
+            {loading ? "Creating..." : "Create Recipe"}
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push("/recipes")}
+            className="text-gray-600 hover:text-gray-800"
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     </div>
   );

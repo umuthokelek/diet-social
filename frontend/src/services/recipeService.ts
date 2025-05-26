@@ -26,6 +26,14 @@ export async function getAllRecipes(): Promise<Recipe[]> {
   return response.data;
 }
 
+export async function getRecipesByUserId(userId: string): Promise<Recipe[]> {
+  const token = localStorage.getItem('token');
+  const response = await axios.get<Recipe[]>(`http://localhost:5177/api/Recipe/user/${userId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  return response.data;
+}
+
 export async function getRecipe(id: string): Promise<Recipe> {
   const token = localStorage.getItem('token');
   const response = await axios.get<Recipe>(`http://localhost:5177/api/Recipe/${id}`, {

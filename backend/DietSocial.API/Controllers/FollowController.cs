@@ -24,17 +24,17 @@ public class FollowController : BaseController
         _context = context;
     }
 
-    [HttpPost("{followedUserId}")]
-    public async Task<IActionResult> FollowUser(Guid followedUserId)
+    [HttpPost("{followingUserId}")]
+    public async Task<IActionResult> FollowUser(Guid followingUserId)
     {
         var followerId = GetCurrentUserId();
-        if (followerId == followedUserId)
+        if (followerId == followingUserId)
         {
             return BadRequest("You cannot follow yourself");
         }
 
         var existingFollow = await _context.Follows
-            .FirstOrDefaultAsync(f => f.FollowerId == followerId && f.FollowedId == followedUserId);
+            .FirstOrDefaultAsync(f => f.FollowerId == followerId && f.FollowingId == followingUserId);
 
         if (existingFollow != null)
         {
@@ -50,7 +50,7 @@ public class FollowController : BaseController
         var follow = new Follow
         {
             FollowerId = followerId,
-            FollowedId = followedUserId,
+            FollowingId = followingUserId,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -60,7 +60,7 @@ public class FollowController : BaseController
         var notification = new Notification
         {
             Id = Guid.NewGuid(),
-            UserId = followedUserId,
+            UserId = followingUserId,
             Type = "follow",
             Message = $"{follower.DisplayName} started following you",
             CreatedAt = DateTime.UtcNow,
@@ -73,12 +73,12 @@ public class FollowController : BaseController
         return Ok();
     }
 
-    [HttpDelete("{followedUserId}")]
-    public async Task<IActionResult> UnfollowUser(Guid followedUserId)
+    [HttpDelete("{followingUserId}")]
+    public async Task<IActionResult> UnfollowUser(Guid followingUserId)
     {
         var followerId = GetCurrentUserId();
         var follow = await _context.Follows
-            .FirstOrDefaultAsync(f => f.FollowerId == followerId && f.FollowedId == followedUserId);
+            .FirstOrDefaultAsync(f => f.FollowerId == followerId && f.FollowingId == followingUserId);
 
         if (follow == null)
         {
@@ -95,7 +95,7 @@ public class FollowController : BaseController
     public async Task<ActionResult<IEnumerable<UserResponse>>> GetFollowers(Guid userId)
     {
         var followers = await _context.Follows
-            .Where(f => f.FollowedId == userId)
+            .Where(f => f.FollowingId == userId)
             .Include(f => f.Follower)
             .Select(f => new UserResponse
             {
@@ -112,11 +112,11 @@ public class FollowController : BaseController
     {
         var following = await _context.Follows
             .Where(f => f.FollowerId == userId)
-            .Include(f => f.Followed)
+            .Include(f => f.Following)
             .Select(f => new UserResponse
             {
-                Id = f.Followed!.Id,
-                DisplayName = f.Followed.DisplayName
+                Id = f.Following!.Id,
+                DisplayName = f.Following.DisplayName
             })
             .ToListAsync();
 
@@ -128,10 +128,10 @@ public class FollowController : BaseController
     {
         var currentUserId = GetCurrentUserId();
         var isFollowing = await _context.Follows
-            .AnyAsync(f => f.FollowerId == currentUserId && f.FollowedId == userId);
+            .AnyAsync(f => f.FollowerId == currentUserId && f.FollowingId == userId);
 
         var followerCount = await _context.Follows
-            .CountAsync(f => f.FollowedId == userId);
+            .CountAsync(f => f.FollowingId == userId);
 
         var followingCount = await _context.Follows
             .CountAsync(f => f.FollowerId == userId);

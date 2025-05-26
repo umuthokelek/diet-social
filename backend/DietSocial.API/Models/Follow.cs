@@ -13,15 +13,15 @@ public class Follow
     public Guid FollowerId { get; set; }
 
     [Required]
-    public Guid FollowedId { get; set; }
+    public Guid FollowingId { get; set; }
 
     [Required]
-    public DateTime CreatedAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Navigation properties
     [ForeignKey("FollowerId")]
-    public User? Follower { get; set; }
+    public User Follower { get; set; } = default!;
 
-    [ForeignKey("FollowedId")]
-    public User? Followed { get; set; }
+    [ForeignKey("FollowingId")]
+    public User Following { get; set; } = default!;
 } 

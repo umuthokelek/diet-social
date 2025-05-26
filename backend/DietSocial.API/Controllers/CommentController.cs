@@ -24,10 +24,12 @@ public class CommentController : BaseController
     }
 
     [HttpGet("post/{postId}")]
+    [AllowAnonymous]
     public async Task<ActionResult<IEnumerable<CommentResponse>>> GetCommentsForPost(Guid postId)
     {
         var comments = await _context.Comments
             .Where(c => c.PostId == postId)
+            .Include(c => c.User)
             .OrderByDescending(c => c.CreatedAt)
             .Select(c => new CommentResponse
             {
@@ -36,7 +38,7 @@ public class CommentController : BaseController
                 CreatedAt = c.CreatedAt,
                 UpdatedAt = c.UpdatedAt,
                 UserId = c.UserId,
-                UserDisplayName = c.User.DisplayName,
+                UserDisplayName = c.User!.DisplayName,
                 PostId = c.PostId
             })
             .ToListAsync();

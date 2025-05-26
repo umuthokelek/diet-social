@@ -1,257 +1,330 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from 'next/link';
 import Head from 'next/head';
-import { Post, postService } from '@/services/posts';
-import { authService } from '@/services/auth';
+import { getAllPosts, getFollowingPosts, createPost, deletePost, Post } from "@/services/postService";
+import { jwtDecode } from "jwt-decode";
 import CommentSection from '@/components/CommentSection';
-import LikeButton from '@/components/LikeButton';
-import { jwtDecode } from 'jwt-decode';
+import { Heart, HeartOff, MessageCircle, Pencil, Trash2, Send, UserCircle } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import api from '@/services/api';
+import CommentLikeButton from '@/components/CommentLikeButton';
 
 interface JwtPayload {
   "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier": string;
-  "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": string;
 }
 
+interface LikeUser {
+  id: string;
+  displayName: string;
+}
+
+interface Comment {
+  id: string;
+  content: string;
+  createdAt: string;
+  userId: string;
+  userDisplayName: string;
+}
+
+type FeedView = 'all' | 'following';
+
 export default function FeedPage() {
-  const router = useRouter();
   const [posts, setPosts] = useState<Post[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editingPostId, setEditingPostId] = useState<string | null>(null);
-  const [editContent, setEditContent] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [view, setView] = useState<FeedView>('all');
+  const [newPost, setNewPost] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const [likeLoading, setLikeLoading] = useState<Set<string>>(new Set());
+  const [likedUsers, setLikedUsers] = useState<Record<string, LikeUser[]>>({});
+  const [showLikesDialog, setShowLikesDialog] = useState<string | null>(null);
+  const [newComment, setNewComment] = useState<Record<string, string>>({});
+  const [commentSubmitting, setCommentSubmitting] = useState<Record<string, boolean>>({});
+  const [editingComment, setEditingComment] = useState<{ id: string; content: string } | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [deleteSubmitting, setDeleteSubmitting] = useState<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
+    const loadData = async () => {
       try {
-        const decoded = jwtDecode<JwtPayload>(token);
-        console.log('Decoded token:', decoded);
-        const userId = decoded["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"];
-        console.log('Extracted user ID:', userId);
-        setCurrentUserId(userId);
-        console.log('Current user ID set to:', userId);
-      } catch (error) {
-        console.error('Error decoding token:', error);
+        // Get current userId from JWT
+        const token = localStorage.getItem('token');
+        if (token) {
+          try {
+            const decoded = jwtDecode<JwtPayload>(token);
+            const userId = decoded["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"];
+            setCurrentUserId(userId);
+          } catch (err) {
+            console.error('Error decoding token:', err);
+            setCurrentUserId(null);
+          }
+        }
+
+        // Load posts based on current view
+        await loadPosts();
+      } catch (err) {
+        console.error('Error loading data:', err);
+        setError("Failed to load posts. Please try again.");
+      } finally {
+        setLoading(false);
       }
-    } else {
-      console.log('No token found in localStorage');
-    }
-  }, []);
+    };
 
-  useEffect(() => {
-    fetchPosts();
-  }, []);
+    loadData();
+  }, [view]); // Reload when view changes
 
-  const fetchPosts = async () => {
+  const loadPosts = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setIsLoading(true);
-      const data = await postService.getPosts();
-      console.log('Fetched posts:', data);
-      setPosts(data);
-      setError(null);
-    } catch (err) {
-      setError('Failed to load posts. Please try again later.');
-      console.error('Error fetching posts:', err);
+      const postsData = view === 'all' 
+        ? await getAllPosts()
+        : await getFollowingPosts();
+      
+      // Load comments for each post
+      const postsWithComments = await Promise.all(
+        postsData.map(async (post) => {
+          try {
+            const commentsResponse = await api.get<Comment[]>(`/Comment/post/${post.id}`);
+            return { ...post, comments: commentsResponse.data };
+          } catch (err) {
+            console.error(`Error fetching comments for post ${post.id}:`, err);
+            return { ...post, comments: [] };
+          }
+        })
+      );
+      
+      setPosts(postsWithComments);
+      
+      // Load liked status for each post
+      const likedStatuses = await Promise.all(
+        postsData.map(async (post) => {
+          try {
+            const likeResponse = await api.get<{ hasLiked: boolean }>(`/Like/hasliked/${post.id}`);
+            return { postId: post.id, hasLiked: likeResponse.data.hasLiked };
+          } catch (err) {
+            console.error(`Error fetching like status for post ${post.id}:`, err);
+            return { postId: post.id, hasLiked: false };
+          }
+        })
+      );
+      const likedSet = new Set(likedStatuses.filter(status => status.hasLiked).map(status => status.postId));
+      setLikedPosts(likedSet);
+    } catch (err: any) {
+      console.error('Error loading posts:', err);
+      if (err?.response?.status === 401) {
+        setError("Please sign in to view posts.");
+        router.push('/login');
+      } else {
+        setError("Failed to load posts. Please try again.");
+      }
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  const handleDelete = async (postId: string) => {
-    if (!confirm('Are you sure you want to delete this post?')) {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPost.trim()) return;
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const post = await createPost({ content: newPost });
+      setPosts([post, ...posts]);
+      setNewPost("");
+    } catch (err: any) {
+      console.error('Error creating post:', err);
+      if (err?.response?.status === 401) {
+        setError("Please sign in to create posts.");
+        router.push('/login');
+      } else {
+        setError("Failed to create post. Please try again.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Are you sure you want to delete this post?")) {
       return;
     }
 
     try {
-      setIsSubmitting(true);
-      await postService.deletePost(postId);
-      setPosts(posts.filter(post => post.id !== postId));
-    } catch (err) {
-      setError('Failed to delete post. Please try again.');
+      await deletePost(id);
+      setPosts(posts.filter(post => post.id !== id));
+    } catch (err: any) {
       console.error('Error deleting post:', err);
-    } finally {
-      setIsSubmitting(false);
+      if (err?.response?.status === 403) {
+        setError("You don't have permission to delete this post.");
+      } else if (err?.response?.status === 401) {
+        setError("Please sign in to delete posts.");
+        router.push('/login');
+      } else {
+        setError("Failed to delete post. Please try again.");
+      }
     }
   };
 
-  const handleEdit = (post: Post) => {
-    setEditingPostId(post.id);
-    setEditContent(post.content);
+  const isPostOwner = (postUserId: string) => {
+    return currentUserId === postUserId;
   };
 
-  const handleUpdate = async (postId: string) => {
-    if (!editContent.trim()) {
-      setError('Post content cannot be empty');
+  const handleLike = async (postId: string) => {
+    if (likeLoading.has(postId)) return;
+    setLikeLoading(prev => new Set(prev).add(postId));
+    try {
+      if (likedPosts.has(postId)) {
+        await api.delete(`/Like/${postId}`);
+        setLikedPosts(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(postId);
+          return newSet;
+        });
+        setPosts(prev => prev.map(post => post.id === postId ? { ...post, likeCount: post.likeCount - 1 } : post));
+        // Update liked users
+        setLikedUsers(prev => ({
+          ...prev,
+          [postId]: prev[postId]?.filter(user => user.id !== currentUserId) || []
+        }));
+      } else {
+        await api.post(`/Like/${postId}`);
+        setLikedPosts(prev => new Set(prev).add(postId));
+        setPosts(prev => prev.map(post => post.id === postId ? { ...post, likeCount: post.likeCount + 1 } : post));
+        // Update liked users
+        if (currentUserId) {
+          const response = await api.get<LikeUser[]>(`/Like/users/${postId}`);
+          setLikedUsers(prev => ({
+            ...prev,
+            [postId]: response.data
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Error toggling like:', err);
+      setError('Failed to update like status. Please try again.');
+    } finally {
+      setLikeLoading(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(postId);
+        return newSet;
+      });
+    }
+  };
+
+  const handleComment = async (postId: string) => {
+    if (!newComment[postId]?.trim()) return;
+    setCommentSubmitting(prev => ({ ...prev, [postId]: true }));
+    try {
+      await api.post(`/Comment`, { content: newComment[postId], postId });
+      setNewComment(prev => ({ ...prev, [postId]: '' }));
+      // Refresh comments
+      const response = await api.get<Comment[]>(`/Comment/post/${postId}`);
+      setPosts(prev => prev.map(post => 
+        post.id === postId 
+          ? { ...post, comments: response.data, commentCount: response.data.length }
+          : post
+      ));
+    } catch (err) {
+      console.error('Error posting comment:', err);
+      setError('Failed to post comment. Please try again.');
+    } finally {
+      setCommentSubmitting(prev => ({ ...prev, [postId]: false }));
+    }
+  };
+
+  const loadLikedUsers = async (postId: string) => {
+    try {
+      const response = await api.get<LikeUser[]>(`/Like/users/${postId}`);
+      setLikedUsers(prev => ({
+        ...prev,
+        [postId]: response.data
+      }));
+    } catch (err) {
+      console.error('Error loading liked users:', err);
+    }
+  };
+
+  const handleEditComment = async (commentId: string, newContent: string) => {
+    if (!newContent.trim()) return;
+    
+    setEditSubmitting(true);
+    try {
+      await api.put(`/Comment/${commentId}`, { content: newContent, postId: posts.find(p => p.comments?.some(c => c.id === commentId))?.id });
+      
+      // Update the comment in the posts state
+      setPosts(prev => prev.map(post => ({
+        ...post,
+        comments: post.comments?.map(comment => 
+          comment.id === commentId 
+            ? { ...comment, content: newContent, updatedAt: new Date().toISOString() }
+            : comment
+        ) || []
+      })));
+      
+      setEditingComment(null);
+    } catch (err) {
+      console.error('Error updating comment:', err);
+      setError('Failed to update comment. Please try again.');
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!window.confirm('Are you sure you want to delete this comment?')) {
       return;
     }
 
+    setDeleteSubmitting(commentId);
     try {
-      setIsSubmitting(true);
-      const updatedPost = await postService.updatePost(postId, editContent);
-      setPosts(posts.map(post => post.id === postId ? updatedPost : post));
-      setEditingPostId(null);
-      setEditContent('');
+      await api.delete(`/Comment/${commentId}`);
+      
+      // Remove the comment from the posts state
+      setPosts(prev => prev.map(post => ({
+        ...post,
+        comments: post.comments?.filter(comment => comment.id !== commentId) || [],
+        commentCount: post.comments?.filter(comment => comment.id !== commentId).length || 0
+      })));
     } catch (err) {
-      setError('Failed to update post. Please try again.');
-      console.error('Error updating post:', err);
+      console.error('Error deleting comment:', err);
+      setError('Failed to delete comment. Please try again.');
     } finally {
-      setIsSubmitting(false);
+      setDeleteSubmitting(null);
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  if (isLoading) {
+  if (loading && posts.length === 0) {
     return (
-      <>
-        <Head>
-          <title>Feed - DietSocial</title>
-        </Head>
-        <div className="flex justify-center items-center min-h-[calc(100vh-4rem)]">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-        </div>
-      </>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="max-w-2xl mx-auto p-4">
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-          <div className="flex items-center">
-            <svg className="h-5 w-5 text-red-400 mr-2" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-            </svg>
-            <span className="block sm:inline">{error}</span>
-          </div>
-          <button
-            onClick={() => setError(null)}
-            className="absolute top-0 bottom-0 right-0 px-4 py-3"
-          >
-            <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
-          </button>
-        </div>
-        <div className="space-y-6">
-          {posts.map((post) => (
-            <div
-              key={post.id}
-              className="bg-white shadow rounded-lg overflow-hidden border border-gray-200 hover:border-gray-300 transition-colors"
-            >
-              <div className="p-6">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="font-medium text-gray-900">
-                      {post.userDisplayName}
-                    </span>
-                    <span className="text-sm text-gray-500 ml-2">
-                      {formatDate(post.createdAt)}
-                    </span>
-                  </div>
-                </div>
-
-                {editingPostId === post.id ? (
-                  <div className="space-y-2">
-                    <textarea
-                      value={editContent}
-                      onChange={(e) => setEditContent(e.target.value)}
-                      className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      rows={3}
-                      maxLength={500}
-                    />
-                    <div className="flex justify-end space-x-2">
-                      <button
-                        onClick={() => setEditingPostId(null)}
-                        className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                        disabled={isSubmitting}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() => handleUpdate(post.id)}
-                        className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                        disabled={isSubmitting}
-                      >
-                        {isSubmitting ? 'Saving...' : 'Save'}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="mt-4 text-gray-700 whitespace-pre-wrap break-words">
-                    {post.content}
-                  </p>
-                )}
-
-                <div className="mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <LikeButton postId={post.id} />
-                    <CommentSection postId={post.id} />
-                  </div>
-                  {currentUserId === post.userId && (
-                    <div className="flex gap-2 items-center">
-                      <button
-                        onClick={() => handleEdit(post)}
-                        className="px-3 py-1 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors"
-                        disabled={isSubmitting}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(post.id)}
-                        className="px-3 py-1 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
-                        disabled={isSubmitting}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-          {posts.length === 0 && (
-            <div className="text-center py-12 bg-white rounded-lg shadow border border-gray-200">
-              <svg
-                className="mx-auto h-12 w-12 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-                />
-              </svg>
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No posts</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                Get started by creating a new post.
-              </p>
-              <div className="mt-6">
-                <Link
-                  href="/posts/new"
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
-                >
-                  New Post
-                </Link>
-              </div>
-            </div>
-          )}
+      <div className="max-w-2xl mx-auto py-8 px-4">
+        <div className="flex justify-center items-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
         </div>
       </div>
     );
@@ -262,123 +335,318 @@ export default function FeedPage() {
       <Head>
         <title>Feed - DietSocial</title>
       </Head>
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">Feed</h1>
-          <Link
-            href="/posts/new"
-            className="w-full sm:w-auto inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
-          >
-            New Post
-          </Link>
+      <div className="max-w-3xl mx-auto py-8 px-4">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            Feed
+          </h1>
+          <Tabs defaultValue={view} onValueChange={(v) => setView(v as FeedView)} className="w-[400px]">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="all">All Posts</TabsTrigger>
+              <TabsTrigger value="following">Following</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg mb-6 flex items-center">
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {error}
+          </div>
+        )}
+
+        <Card className="mb-8">
+          <CardContent className="pt-6">
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <Textarea
+                value={newPost}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setNewPost(e.target.value)}
+                placeholder="What's on your mind?"
+                className="min-h-[100px] resize-none"
+                rows={3}
+              />
+              <div className="flex justify-end">
+                <Button
+                  type="submit"
+                  disabled={submitting || !newPost.trim()}
+                  className="w-24"
+                >
+                  {submitting ? (
+                    <div className="flex items-center">
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                      Posting
+                    </div>
+                  ) : (
+                    "Post"
+                  )}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
 
         <div className="space-y-6">
           {posts.map((post) => (
-            <div
-              key={post.id}
-              className="bg-white shadow rounded-lg overflow-hidden border border-gray-200 hover:border-gray-300 transition-colors"
-            >
-              <div className="p-6">
+            <Card key={post.id} className="overflow-hidden">
+              <CardHeader className="pb-4">
                 <div className="flex justify-between items-start">
-                  <div>
-                    <span className="font-medium text-gray-900">
-                      {post.userDisplayName}
-                    </span>
-                    <span className="text-sm text-gray-500 ml-2">
-                      {formatDate(post.createdAt)}
-                    </span>
-                  </div>
-                </div>
-
-                {editingPostId === post.id ? (
-                  <div className="space-y-2">
-                    <textarea
-                      value={editContent}
-                      onChange={(e) => setEditContent(e.target.value)}
-                      className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      rows={3}
-                      maxLength={500}
-                    />
-                    <div className="flex justify-end space-x-2">
-                      <button
-                        onClick={() => setEditingPostId(null)}
-                        className="px-4 py-2 text-gray-600 hover:text-gray-800"
-                        disabled={isSubmitting}
+                  <div className="flex items-center space-x-3">
+                    <Avatar className="h-10 w-10">
+                      <AvatarFallback>
+                        {post.userDisplayName ? post.userDisplayName.charAt(0).toUpperCase() : 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <Link
+                        href={`/profile/${post.userId}`}
+                        className="font-semibold text-gray-900 hover:text-blue-600 transition-colors"
                       >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() => handleUpdate(post.id)}
-                        className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                        disabled={isSubmitting}
-                      >
-                        {isSubmitting ? 'Saving...' : 'Save'}
-                      </button>
+                        {post.userDisplayName}
+                      </Link>
+                      <p className="text-sm text-gray-500">
+                        {new Date(post.createdAt).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </p>
                     </div>
                   </div>
-                ) : (
-                  <p className="mt-4 text-gray-700 whitespace-pre-wrap break-words">
-                    {post.content}
-                  </p>
-                )}
-
-                <div className="mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <LikeButton postId={post.id} />
-                    <CommentSection postId={post.id} />
-                  </div>
-                  {currentUserId === post.userId && (
-                    <div className="flex gap-2 items-center">
-                      <button
-                        onClick={() => handleEdit(post)}
-                        className="px-3 py-1 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors"
-                        disabled={isSubmitting}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(post.id)}
-                        className="px-3 py-1 text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
-                        disabled={isSubmitting}
-                      >
-                        Delete
-                      </button>
+                  {isPostOwner(post.userId) && (
+                    <div className="flex gap-1">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Link href={`/posts/edit/${post.id}`}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                          </TooltipTrigger>
+                          <TooltipContent>Edit post</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => handleDelete(post.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete post</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </div>
                   )}
                 </div>
+              </CardHeader>
+              
+              <CardContent>
+                <p className="text-gray-700 whitespace-pre-wrap">{post.content}</p>
+              </CardContent>
+
+              <Separator />
+
+              <CardFooter className="flex items-center justify-between py-4">
+                <div className="flex items-center gap-4">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex items-center gap-2 hover:bg-red-50 hover:text-red-600"
+                          onClick={() => {
+                            handleLike(post.id);
+                            loadLikedUsers(post.id);
+                          }}
+                          disabled={likeLoading.has(post.id)}
+                        >
+                          {likedPosts.has(post.id) ? (
+                            <Heart className="h-5 w-5 text-red-500 fill-red-500" />
+                          ) : (
+                            <HeartOff className="h-5 w-5" />
+                          )}
+                          <span>{post.likeCount}</span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="p-2">
+                        {post.likeCount > 0 ? (
+                          <div className="max-w-xs space-y-2">
+                            {likedUsers[post.id]?.map(user => (
+                              <div key={user.id} className="flex items-center gap-2">
+                                <Avatar className="h-6 w-6">
+                                  <AvatarFallback>
+                                    {user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U'}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <span className="text-sm">{user.displayName}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span>No likes yet</span>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                  
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <MessageCircle className="h-5 w-5" />
+                    <span>{post.commentCount}</span>
+                  </div>
+                </div>
+              </CardFooter>
+
+              <Separator />
+
+              {/* Comments Section */}
+              <div className="p-4 space-y-4">
+                {post.comments && post.comments.length > 0 ? (
+                  <div className="space-y-4">
+                    {post.comments.map((comment) => (
+                      <div key={comment.id} className="bg-gray-50 rounded-lg p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex items-center gap-2">
+                            <Avatar className="h-8 w-8">
+                              <AvatarFallback>
+                                {comment.userDisplayName ? comment.userDisplayName.charAt(0).toUpperCase() : 'U'}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <Link
+                                href={`/profile/${comment.userId}`}
+                                className="font-medium text-sm text-gray-900 hover:text-blue-600 hover:underline transition-colors"
+                              >
+                                {comment.userDisplayName}
+                              </Link>
+                              <p className="text-xs text-gray-500">
+                                {new Date(comment.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+                          {currentUserId === comment.userId && (
+                            <div className="flex gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={() => setEditingComment({ id: comment.id, content: comment.content })}
+                                disabled={editSubmitting || deleteSubmitting === comment.id}
+                              >
+                                <Pencil className="h-3 w-3 mr-1" />
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => handleDeleteComment(comment.id)}
+                                disabled={editSubmitting || deleteSubmitting === comment.id}
+                              >
+                                {deleteSubmitting === comment.id ? (
+                                  <div className="flex items-center">
+                                    <div className="w-3 h-3 border-2 border-red-600 border-t-transparent rounded-full animate-spin mr-1" />
+                                    Deleting
+                                  </div>
+                                ) : (
+                                  <>
+                                    <Trash2 className="h-3 w-3 mr-1" />
+                                    Delete
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                        {editingComment?.id === comment.id ? (
+                          <div className="mt-2 space-y-2">
+                            <Textarea
+                              value={editingComment.content}
+                              onChange={(e) => setEditingComment(prev => prev ? { ...prev, content: e.target.value } : null)}
+                              className="w-full"
+                              rows={2}
+                            />
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setEditingComment(null)}
+                                disabled={editSubmitting}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                onClick={() => handleEditComment(comment.id, editingComment.content)}
+                                disabled={editSubmitting || !editingComment.content.trim()}
+                              >
+                                {editSubmitting ? (
+                                  <div className="flex items-center">
+                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin mr-1" />
+                                    Saving
+                                  </div>
+                                ) : (
+                                  "Save"
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-sm text-gray-700">{comment.content}</p>
+                            <div className="mt-2 flex items-center justify-between">
+                              <CommentLikeButton
+                                commentId={comment.id}
+                                initialLikeCount={(comment as any).likes ? (comment as any).likes.length : 0}
+                              />
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">No comments yet</p>
+                )}
+
+                <div className="flex gap-2">
+                  <Input
+                    value={newComment[post.id] || ''}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewComment(prev => ({ ...prev, [post.id]: e.target.value }))}
+                    placeholder="Write a comment..."
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={() => handleComment(post.id)}
+                    disabled={!newComment[post.id]?.trim() || commentSubmitting[post.id]}
+                    className="w-24"
+                  >
+                    {commentSubmitting[post.id] ? (
+                      <div className="flex items-center">
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                        Posting
+                      </div>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4 mr-2" />
+                        Post
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
-            </div>
+            </Card>
           ))}
-          {posts.length === 0 && (
-            <div className="text-center py-12 bg-white rounded-lg shadow border border-gray-200">
-              <svg
-                className="mx-auto h-12 w-12 text-gray-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
-                />
-              </svg>
-              <h3 className="mt-2 text-sm font-medium text-gray-900">No posts</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                Get started by creating a new post.
-              </p>
-              <div className="mt-6">
-                <Link
-                  href="/posts/new"
-                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
-                >
-                  New Post
-                </Link>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </>
